@@ -68,21 +68,21 @@ jobs:
       run: |
         # Create a clean ZIP without nested folders
         cd release
-        Compress-Archive -Path * -DestinationPath "..\COCA-Smart-Timer-${{ github.event.inputs.version || github.ref_name }}-Windows.zip"
+        Compress-Archive -Path * -DestinationPath "..\Smart-Coca-Timer.zip"
         cd ..
         
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: COCA-Smart-Timer-Windows-${{ github.sha }}
-        path: "COCA-Smart-Timer-*.zip"
+        name: Smart-Coca-Timer-Windows
+        path: "Smart-Coca-Timer.zip"
 
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.event.inputs.version || github.ref_name }}
-        name: "COCA Smart Timer ${{ github.event.inputs.version || github.ref_name }}"
+        name: "Smart Coca Timer ${{ github.event.inputs.version || github.ref_name }}"
         body: |
           ## COCA Smart Timer Release
           
@@ -106,9 +106,9 @@ jobs:
           - Windows 10/11
           - Tesseract OCR (included in installer)
           
-          Built with ❤️ for the gaming community.
+          Built for PerpHeads Gmod community.
         files: |
-          COCA-Smart-Timer-*.zip
+          Smart-Coca-Timer.zip
         draft: false
         prerelease: false
       env:
