@@ -17,6 +17,8 @@ A smart overlay timer for gaming with OCR percentage detection and coca leaf-the
 
 ## 🚀 Quick Start
 
+> **⚠️ IMPORTANT**: Make sure your game is in **Windowed Mode** to see the timer overlay!
+
 1. **Download** the latest release from [Releases](../../releases)
 2. **Extract** the ZIP file to your desired location
 3. **Run** `COCA-Smart-Timer.exe`
@@ -57,6 +59,7 @@ Right-click the system tray icon to access:
 - **OS**: Windows 10/11
 - **Python**: 3.8+ (bundled in executable)
 - **OCR**: Tesseract OCR (auto-installed)
+- **⚠️ IMPORTANT**: Game must be in **Windowed Mode** to see the timer overlay
 
 ### Built With
 - **PyQt6**: Modern UI framework
