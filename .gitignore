@@ -44,5 +44,14 @@ Thumbs.db
 coca_config.json
 *.log
 
+# Test files and debugging
+test_*.png
+test_*.jpg
+test_*.jpeg
+debug.log
+debug_*.log
+screenshots/
+*.debug
+
 # Old structure (keep for reference)
 coca-timer/

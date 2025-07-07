@@ -7,9 +7,17 @@ Handles OCR percentage detection and countdown timer functionality.
 import threading
 import time
 import re
-from typing import Optional, List, Callable
+import os
+from typing import Optional, List, Callable, Tuple
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageFilter
+import cv2
+
+# Handle both relative and absolute imports
+try:
+    from .debug_logger import debug_logger
+except ImportError:
+    from debug_logger import debug_logger
 
 # OCR imports
 try:
@@ -63,11 +71,11 @@ class CocaTimer:
     
     def detect_percentage(self, image: np.ndarray) -> Optional[float]:
         """
-        Detect percentage from image using OCR.
-        
+        Enhanced percentage detection with multiple OCR methods and debugging.
+
         Args:
             image: Screenshot image as numpy array
-            
+
         Returns:
             Detected percentage value or None if not found
         """
@@ -85,6 +93,9 @@ class CocaTimer:
                 print("⚠️ Invalid image for OCR")
                 return None
 
+            # Save debug screenshot (only if debug logging is enabled)
+            debug_logger.save_debug_screenshot(image, "original")
+
             # Convert to PIL Image with error handling
             pil_image = None
             try:
@@ -92,64 +103,255 @@ class CocaTimer:
                     pil_image = Image.fromarray(image.astype('uint8'))
                 else:
                     pil_image = Image.fromarray(image.astype('uint8')).convert('RGB')
+                debug_logger.log_image_processing("PIL conversion", True, f"Size: {pil_image.size}")
             except Exception as e:
-                print(f"⚠️ Error converting image: {e}")
+                debug_logger.log_image_processing("PIL conversion", False, str(e))
                 return None
 
-            if pil_image is None:
-                print("⚠️ Failed to create PIL image")
-                return None
-
-            # Enhance image for better OCR with error handling
-            enhanced_image = None
-            try:
-                enhanced_image = self.enhance_image_for_ocr(pil_image)
-            except Exception as e:
-                print(f"⚠️ Error enhancing image, using original: {e}")
-                enhanced_image = pil_image
-
-            # Perform OCR with multiple attempts and configurations
-            text = ""
-            ocr_configs = [
-                '--psm 6 -c tessedit_char_whitelist=0123456789%',
-                '--psm 8 -c tessedit_char_whitelist=0123456789%',
-                '--psm 7 -c tessedit_char_whitelist=0123456789%'
+            # Use only the most accurate method for maximum speed
+            methods = [
+                ("Standard Enhanced", self._method_standard_enhanced)
             ]
 
-            for config in ocr_configs:
+            all_results = []
+
+            for method_name, method_func in methods:
+
                 try:
-                    text = pytesseract.image_to_string(enhanced_image, config=config)
-                    if text and '%' in text:
-                        break  # Found text with percentage, use this result
+                    result = method_func(pil_image)
+                    if result is not None:
+                        all_results.append((method_name, result))
+
+                    else:
+                        pass
                 except Exception as e:
-                    print(f"⚠️ OCR attempt failed with config {config}: {e}")
-                    continue
+                    print(f"⚠️ {method_name} failed: {e}")
 
-            if not text:
-                print("❌ All OCR attempts failed")
-                return None
+            # Choose best result (prefer non-zero values)
+            if all_results:
+                # Filter out 0% results if we have other options
+                non_zero_results = [(name, val) for name, val in all_results if val > 0]
 
-            # Extract percentages with error handling
-            percentages = []
-            try:
-                percentages = self.extract_percentages(text)
-            except Exception as e:
-                print(f"⚠️ Error extracting percentages: {e}")
-                return None
+                if non_zero_results:
+                    # Use the first non-zero result
+                    best_method, best_result = non_zero_results[0]
+                else:
+                    # Use the first result even if it's 0%
+                    best_method, best_result = all_results[0]
 
-            if percentages:
-                # Take the smallest percentage (as requested in original)
-                min_percentage = min(percentages)
-                print(f"🔍 Found percentages: {percentages} - Using: {min_percentage}%")
-                return min_percentage
+                print(f"🔍 COCA OCR: Detected {best_result}% using {best_method}")
+                debug_logger.log("INFO", f"� All results: {all_results}")
+                return best_result
             else:
-                print(f"❌ No percentages found in OCR text: '{text.strip()}'")
+                debug_logger.log_final_result(None)
                 return None
 
         except Exception as e:
-            print(f"⚠️ Critical OCR detection error: {e}")
+            debug_logger.log("ERROR", f"⚠️ Critical OCR detection error: {e}")
             return None
-    
+
+    def _method_standard_enhanced(self, image: Image.Image) -> Optional[float]:
+        """Fast standard enhanced OCR method."""
+        try:
+            enhanced = self.enhance_image_for_ocr(image)
+            debug_logger.save_debug_screenshot(np.array(enhanced), "enhanced")
+
+            # Only use the most effective PSM modes for speed
+            configs = [
+                '--psm 6 -c tessedit_char_whitelist=0123456789%',
+                '--psm 8 -c tessedit_char_whitelist=0123456789%'
+            ]
+
+            for config in configs:
+                text = pytesseract.image_to_string(enhanced, config=config)
+                debug_logger.log_ocr_attempt("Standard Enhanced", config, text, '%' in text)
+
+                percentages = self.extract_percentages(text)
+                if percentages:
+                    debug_logger.log_percentage_extraction(text, percentages, "Standard Enhanced")
+                    return min(percentages)
+
+            return None
+        except Exception as e:
+            debug_logger.log("ERROR", f"Standard Enhanced method failed: {e}")
+            return None
+
+    def _method_binary_threshold_specific(self, image: Image.Image, threshold: int) -> Optional[float]:
+        """Binary threshold OCR method with specific threshold value for white text with black outlines."""
+        try:
+            debug_logger.log("DEBUG", f"🔬 Testing binary threshold: {threshold}")
+
+            # Convert to grayscale
+            gray = image.convert('L')
+
+            # Apply specific binary threshold
+            # For white text with black outlines, we want to keep white pixels (above threshold)
+            binary = gray.point(lambda x: 255 if x > threshold else 0, mode='1')
+            binary_rgb = binary.convert('RGB')
+
+            debug_logger.save_debug_screenshot(np.array(binary_rgb), f"binary_{threshold}")
+
+            # Try multiple PSM modes for better detection
+            configs = [
+                '--psm 6 -c tessedit_char_whitelist=0123456789%',
+                '--psm 8 -c tessedit_char_whitelist=0123456789%',
+                '--psm 7 -c tessedit_char_whitelist=0123456789%',
+                '--psm 13 -c tessedit_char_whitelist=0123456789%'
+            ]
+
+            for config in configs:
+                try:
+                    text = pytesseract.image_to_string(binary_rgb, config=config)
+                    debug_logger.log_ocr_attempt(f"Binary {threshold}", config, text, '%' in text)
+
+                    percentages = self.extract_percentages(text)
+                    if percentages:
+                        debug_logger.log_percentage_extraction(text, percentages, f"Binary {threshold}")
+                        return min(percentages)
+                except Exception as e:
+                    debug_logger.log("WARNING", f"OCR failed for Binary {threshold} with {config}: {e}")
+                    continue
+
+            return None
+        except Exception as e:
+            debug_logger.log("ERROR", f"Binary Threshold {threshold} method failed: {e}")
+            return None
+
+
+
+    def _method_high_contrast(self, image: Image.Image) -> Optional[float]:
+        """Fast high contrast OCR method."""
+        try:
+            # Increase contrast dramatically
+            contrast_enhancer = ImageEnhance.Contrast(image)
+            high_contrast = contrast_enhancer.enhance(3.0)
+
+            # Increase brightness
+            brightness_enhancer = ImageEnhance.Brightness(high_contrast)
+            bright = brightness_enhancer.enhance(1.5)
+
+            debug_logger.save_debug_screenshot(np.array(bright), "high_contrast")
+
+            # Only use the most effective PSM mode for speed
+            text = pytesseract.image_to_string(bright, config='--psm 6 -c tessedit_char_whitelist=0123456789%')
+            debug_logger.log_ocr_attempt("High Contrast", "--psm 6", text, '%' in text)
+
+            percentages = self.extract_percentages(text)
+            if percentages:
+                debug_logger.log_percentage_extraction(text, percentages, "High Contrast")
+                return min(percentages)
+
+            return None
+        except Exception as e:
+            debug_logger.log("ERROR", f"High Contrast method failed: {e}")
+            return None
+
+
+
+    def _method_grayscale_sharpen(self, image: Image.Image) -> Optional[float]:
+        """Grayscale with sharpening OCR method."""
+        try:
+            # Convert to grayscale
+            gray = image.convert('L')
+
+            # Apply sharpening filter
+            sharpened = gray.filter(ImageFilter.SHARPEN)
+
+            # Convert back to RGB for OCR
+            rgb = sharpened.convert('RGB')
+
+            debug_logger.save_debug_screenshot(np.array(rgb), "grayscale_sharp")
+
+            configs = [
+                '--psm 6 -c tessedit_char_whitelist=0123456789%',
+                '--psm 8 -c tessedit_char_whitelist=0123456789%'
+            ]
+
+            for config in configs:
+                text = pytesseract.image_to_string(rgb, config=config)
+                debug_logger.log_ocr_attempt("Grayscale + Sharpen", config, text, '%' in text)
+
+                percentages = self.extract_percentages(text)
+                if percentages:
+                    debug_logger.log_percentage_extraction(text, percentages, "Grayscale + Sharpen")
+                    return min(percentages)
+
+            return None
+        except Exception as e:
+            debug_logger.log("ERROR", f"Grayscale + Sharpen method failed: {e}")
+            return None
+
+    def _method_morphological(self, image: Image.Image) -> Optional[float]:
+        """Morphological operations OCR method."""
+        try:
+            # Convert PIL to OpenCV
+            cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+            # Convert to grayscale
+            gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+
+            # Apply morphological operations
+            kernel = np.ones((2, 2), np.uint8)
+            morph = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
+
+            # Convert back to PIL
+            morph_pil = Image.fromarray(morph).convert('RGB')
+
+            debug_logger.save_debug_screenshot(np.array(morph_pil), "morphological")
+
+            configs = [
+                '--psm 6 -c tessedit_char_whitelist=0123456789%',
+                '--psm 8 -c tessedit_char_whitelist=0123456789%'
+            ]
+
+            for config in configs:
+                text = pytesseract.image_to_string(morph_pil, config=config)
+                debug_logger.log_ocr_attempt("Morphological", config, text, '%' in text)
+
+                percentages = self.extract_percentages(text)
+                if percentages:
+                    debug_logger.log_percentage_extraction(text, percentages, "Morphological")
+                    return min(percentages)
+
+            return None
+        except Exception as e:
+            debug_logger.log("ERROR", f"Morphological method failed: {e}")
+            return None
+
+    def _method_multi_scale(self, image: Image.Image) -> Optional[float]:
+        """Multi-scale OCR method."""
+        try:
+            scales = [1.5, 2.0, 2.5]
+
+            for scale in scales:
+                # Scale up the image
+                new_size = (int(image.width * scale), int(image.height * scale))
+                scaled = image.resize(new_size, Image.LANCZOS)
+
+                # Apply enhancement
+                enhanced = self.enhance_image_for_ocr(scaled)
+
+                debug_logger.save_debug_screenshot(np.array(enhanced), f"multi_scale_{scale}")
+
+                configs = [
+                    '--psm 6 -c tessedit_char_whitelist=0123456789%',
+                    '--psm 8 -c tessedit_char_whitelist=0123456789%'
+                ]
+
+                for config in configs:
+                    text = pytesseract.image_to_string(enhanced, config=config)
+                    debug_logger.log_ocr_attempt(f"Multi-Scale {scale}x", config, text, '%' in text)
+
+                    percentages = self.extract_percentages(text)
+                    if percentages:
+                        debug_logger.log_percentage_extraction(text, percentages, f"Multi-Scale {scale}x")
+                        return min(percentages)
+
+            return None
+        except Exception as e:
+            debug_logger.log("ERROR", f"Multi-Scale method failed: {e}")
+            return None
+
     def enhance_image_for_ocr(self, img: Image.Image) -> Image.Image:
         """Enhance image for better OCR accuracy."""
         try:
