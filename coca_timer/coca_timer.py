@@ -8,7 +8,7 @@ import threading
 import time
 import re
 import os
-from typing import Optional, List, Callable, Tuple
+from typing import Optional, List, Callable
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 import cv2
@@ -19,13 +19,55 @@ try:
 except ImportError:
     from debug_logger import debug_logger
 
-# OCR imports
+# OCR imports and auto-configuration
 try:
     import pytesseract
     OCR_AVAILABLE = True
     print("✅ OCR (pytesseract) available")
+
+    # Auto-detect bundled Tesseract
+    def setup_tesseract():
+        """Auto-detect and configure Tesseract path."""
+        import sys
+        import os
+
+        # Get the directory where the script/exe is located
+        if getattr(sys, 'frozen', False):
+            # Running as exe
+            app_dir = os.path.dirname(sys.executable)
+        else:
+            # Running as script
+            app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        # Check for bundled Tesseract
+        bundled_tesseract = os.path.join(app_dir, 'tesseract', 'tesseract.exe')
+
+        if os.path.exists(bundled_tesseract):
+            pytesseract.pytesseract.tesseract_cmd = bundled_tesseract
+            print(f"✅ Using bundled Tesseract: {bundled_tesseract}")
+            return True
+
+        # Check system installation
+        system_paths = [
+            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+            r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe'
+        ]
+
+        for path in system_paths:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                print(f"✅ Using system Tesseract: {path}")
+                return True
+
+        print("⚠️ Tesseract not found! Please install Tesseract OCR or use the bundled version.")
+        return False
+
+    # Setup Tesseract automatically
+    TESSERACT_CONFIGURED = setup_tesseract()
+
 except ImportError:
     OCR_AVAILABLE = False
+    TESSERACT_CONFIGURED = False
     print("⚠️ OCR not available - install pytesseract")
 
 # Audio removed for clean minimal implementation
@@ -48,26 +90,9 @@ class CocaTimer:
         self.original_time = 38 * 60
         self.notifications_sent = set()  # Track sent notifications
 
-        # Setup tesseract path if needed
-        self.setup_tesseract()
+        # Tesseract is auto-configured on import
     
-    def setup_tesseract(self):
-        """Setup tesseract path for Windows."""
-        if not OCR_AVAILABLE:
-            return
-            
-        import os
-        tesseract_paths = [
-            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-            "tesseract"  # If it's in PATH
-        ]
-        
-        for path in tesseract_paths:
-            if path == "tesseract" or os.path.exists(path):
-                pytesseract.pytesseract.tesseract_cmd = path
-                print(f"✅ Tesseract found at: {path}")
-                break
+
     
     def detect_percentage(self, image: np.ndarray) -> Optional[float]:
         """
@@ -326,7 +351,7 @@ class CocaTimer:
             for scale in scales:
                 # Scale up the image
                 new_size = (int(image.width * scale), int(image.height * scale))
-                scaled = image.resize(new_size, Image.LANCZOS)
+                scaled = image.resize(new_size, Image.Resampling.LANCZOS)
 
                 # Apply enhancement
                 enhanced = self.enhance_image_for_ocr(scaled)

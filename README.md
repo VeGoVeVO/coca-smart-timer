@@ -58,7 +58,7 @@ Right-click the system tray icon to access:
 ### Requirements
 - **OS**: Windows 10/11
 - **Python**: 3.8+ (bundled in executable)
-- **OCR**: Tesseract OCR (auto-installed)
+- **OCR**: Tesseract OCR (bundled - no installation required!)
 - **⚠️ IMPORTANT**: Game must be in **Windowed Mode** to see the timer overlay
 
 ### Built With
