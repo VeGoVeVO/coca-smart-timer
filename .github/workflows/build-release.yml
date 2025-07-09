@@ -63,29 +63,28 @@ jobs:
         
     - name: Create release package
       run: |
-        mkdir release
-        # Copy the entire distribution folder
-        xcopy /E /I dist\COCA-Smart-Timer release\COCA-Smart-Timer
+        # Create release directory structure directly without nesting
+        mkdir "Smart-Coca-Timer"
+        # Copy the distribution files directly to the main folder
+        xcopy /E /I dist\COCA-Smart-Timer\* Smart-Coca-Timer\
         # Copy Tesseract bundle to release
-        xcopy /E /I tesseract-bundle release\COCA-Smart-Timer\tesseract
-        copy README.md release\
-        echo "COCA Smart Timer v${{ github.event.inputs.version || github.ref_name }}" > release\VERSION.txt
-        echo "Built on $(Get-Date)" >> release\VERSION.txt
-        echo "" >> release\VERSION.txt
-        echo "To run: Execute COCA-Smart-Timer.exe inside the COCA-Smart-Timer folder" >> release\VERSION.txt
-        echo "Tesseract OCR is bundled - no separate installation required!" >> release\VERSION.txt
-        
+        xcopy /E /I tesseract-bundle Smart-Coca-Timer\tesseract\
+        copy README.md Smart-Coca-Timer\
+        echo "COCA Smart Timer v${{ github.event.inputs.version || github.ref_name }}" > Smart-Coca-Timer\VERSION.txt
+        echo "Built on $(Get-Date)" >> Smart-Coca-Timer\VERSION.txt
+        echo "" >> Smart-Coca-Timer\VERSION.txt
+        echo "To run: Execute COCA-Smart-Timer.exe in this folder" >> Smart-Coca-Timer\VERSION.txt
+        echo "Tesseract OCR is bundled - no separate installation required!" >> Smart-Coca-Timer\VERSION.txt
+
     - name: Create ZIP archive
       run: |
-        # Create a clean ZIP without nested folders
-        cd release
-        Compress-Archive -Path * -DestinationPath "..\Smart-Coca-Timer.zip"
-        cd ..
+        # Create a clean ZIP with the folder structure
+        Compress-Archive -Path "Smart-Coca-Timer" -DestinationPath "Smart-Coca-Timer.zip"
         
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Smart-Coca-Timer-Windows
+        name: Smart-Coca-Timer
         path: "Smart-Coca-Timer.zip"
 
     - name: Create Release
