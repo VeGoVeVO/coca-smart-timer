@@ -8,7 +8,7 @@ import threading
 import time
 import re
 import os
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Tuple
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 import cv2
@@ -90,33 +90,38 @@ class CocaTimer:
         self.original_time = 38 * 60
         self.notifications_sent = set()  # Track sent notifications
 
+        # Plant lifecycle stages
+        self.current_stage = "growing"  # growing, ready, flowering, seeding
+        self.crop_type = "coca"  # coca or marijuana
+        self.planter_type = "basic"  # basic or planter_box
+
         # Tesseract is auto-configured on import
     
 
     
-    def detect_percentage(self, image: np.ndarray) -> Optional[float]:
+    def detect_percentage_and_crop(self, image: np.ndarray) -> Tuple[Optional[float], Optional[str]]:
         """
-        Enhanced percentage detection with multiple OCR methods and debugging.
+        Enhanced detection that extracts both percentage and crop type from screenshot.
 
         Args:
             image: Screenshot image as numpy array
 
         Returns:
-            Detected percentage value or None if not found
+            Tuple of (percentage, crop_type) where crop_type is 'coca', 'marijuana', or None
         """
         if not OCR_AVAILABLE:
             print("❌ OCR not available")
-            return None
+            return None, None
 
         if image is None:
             print("⚠️ No image provided for OCR")
-            return None
+            return None, None
 
         try:
             # Validate image
             if not isinstance(image, np.ndarray) or image.size == 0:
                 print("⚠️ Invalid image for OCR")
-                return None
+                return None, None
 
             # Save debug screenshot (only if debug logging is enabled)
             debug_logger.save_debug_screenshot(image, "original")
@@ -131,12 +136,139 @@ class CocaTimer:
                 debug_logger.log_image_processing("PIL conversion", True, f"Size: {pil_image.size}")
             except Exception as e:
                 debug_logger.log_image_processing("PIL conversion", False, str(e))
-                return None
+                return None, None
 
-            # Use only the most accurate method for maximum speed
-            methods = [
-                ("Standard Enhanced", self._method_standard_enhanced)
+            # Use enhanced OCR to extract both percentage and crop type
+            percentage, crop_type = self._extract_percentage_and_crop(pil_image)
+
+            if percentage is not None:
+                crop_info = f" (crop: {crop_type})" if crop_type else ""
+                print(f"🔍 COCA OCR: Detected {percentage}%{crop_info}")
+                debug_logger.log("INFO", f"Detected percentage: {percentage}%, crop: {crop_type}")
+                return percentage, crop_type
+            else:
+                debug_logger.log_final_result(None)
+                return None, None
+
+        except Exception as e:
+            debug_logger.log("ERROR", f"⚠️ Critical OCR detection error: {e}")
+            return None, None
+
+    def detect_percentage(self, image: np.ndarray) -> Optional[float]:
+        """
+        Enhanced percentage detection with multiple OCR methods and debugging.
+        Backward compatibility method that only returns percentage.
+
+        Args:
+            image: Screenshot image as numpy array
+
+        Returns:
+            Detected percentage value or None if not found
+        """
+        percentage, _ = self.detect_percentage_and_crop(image)
+        return percentage
+
+    def _extract_percentage_and_crop(self, image: Image.Image) -> Tuple[Optional[float], Optional[str]]:
+        """
+        Extract both percentage and crop type from OCR text.
+
+        Args:
+            image: PIL Image to process
+
+        Returns:
+            Tuple of (percentage, crop_type) where crop_type is 'coca', 'marijuana', or None
+        """
+        try:
+            # Use enhanced OCR to get full text
+            enhanced = self.enhance_image_for_ocr(image)
+            debug_logger.save_debug_screenshot(np.array(enhanced), "enhanced")
+
+            # Use broader OCR config to capture more text including crop names
+            configs = [
+                '--psm 6',  # Uniform block of text
+                '--psm 8',  # Single word
+                '--psm 7',  # Single text line
             ]
+
+            best_percentage = None
+            detected_crop = None
+
+            for config in configs:
+                try:
+                    # Get full text without character restrictions for crop detection
+                    full_text = pytesseract.image_to_string(enhanced, config=config)
+                    debug_logger.log_ocr_attempt("Full Text OCR", config, full_text, True)
+
+                    # Extract percentage from text
+                    percentages = self.extract_percentages(full_text)
+                    if percentages and best_percentage is None:
+                        best_percentage = min(percentages)
+
+                    # Extract crop type from text
+                    if detected_crop is None:
+                        detected_crop = self.extract_crop_type(full_text)
+
+                    # If we have both, we can stop
+                    if best_percentage is not None and detected_crop is not None:
+                        break
+
+                except Exception as e:
+                    debug_logger.log("WARNING", f"OCR failed with {config}: {e}")
+                    continue
+
+            debug_logger.log("INFO", f"Extracted - Percentage: {best_percentage}%, Crop: {detected_crop}")
+            return best_percentage, detected_crop
+
+        except Exception as e:
+            debug_logger.log("ERROR", f"_extract_percentage_and_crop failed: {e}")
+            return None, None
+
+    def extract_crop_type(self, text: str) -> Optional[str]:
+        """
+        Extract crop type from OCR text.
+
+        Args:
+            text: OCR text to analyze
+
+        Returns:
+            'coca', 'marijuana', or None if not detected
+        """
+        try:
+            # Convert to lowercase for case-insensitive matching
+            text_lower = text.lower()
+
+            # Look for specific crop type keywords only
+            if 'coca' in text_lower:
+                return 'coca'
+            elif 'cannabis' in text_lower:
+                return 'marijuana'
+
+            return None
+
+        except Exception as e:
+            debug_logger.log("ERROR", f"Error extracting crop type: {e}")
+            return None
+
+    def _method_standard_enhanced_legacy(self, image: Image.Image) -> Optional[float]:
+        """Legacy method for backward compatibility."""
+        try:
+            enhanced = self.enhance_image_for_ocr(image)
+            debug_logger.save_debug_screenshot(np.array(enhanced), "enhanced")
+
+            # Only use the most effective PSM modes for speed
+            configs = [
+                '--psm 6 -c tessedit_char_whitelist=0123456789%',
+                '--psm 8 -c tessedit_char_whitelist=0123456789%'
+            ]
+
+            for config in configs:
+                text = pytesseract.image_to_string(enhanced, config=config)
+                debug_logger.log_ocr_attempt("Standard Enhanced", config, text, '%' in text)
+
+                percentages = self.extract_percentages(text)
+                if percentages:
+                    debug_logger.log_percentage_extraction(text, percentages, "Standard Enhanced")
+                    return min(percentages)
 
             all_results = []
 
@@ -429,23 +561,28 @@ class CocaTimer:
             print(f"⚠️ Error extracting percentages: {e}")
             return []
     
-    def start(self, initial_time: int = None):
-        """Start the countdown timer."""
+    def start(self, initial_time: int = None, crop_type: str = "coca", planter_type: str = "basic"):
+        """Start the countdown timer with plant lifecycle support."""
         if self.running:
             self.stop()
-        
+
         if initial_time is not None:
             self.time_left = initial_time
             self.original_time = initial_time
-        
+
+        # Set plant configuration
+        self.crop_type = crop_type
+        self.planter_type = planter_type
+        self.current_stage = "growing"
+
         self.running = True
         self.notifications_sent.clear()
-        
+
         # Start timer thread
         self.timer_thread = threading.Thread(target=self._timer_loop, daemon=True)
         self.timer_thread.start()
-        
-        print(f"🎯 COCA timer started: {self.time_left//60}:{self.time_left%60:02d}")
+
+        print(f"🎯 COCA timer started: {self.time_left//60}:{self.time_left%60:02d} ({crop_type} in {planter_type})")
     
     def stop(self):
         """Stop the timer."""
@@ -459,21 +596,23 @@ class CocaTimer:
         was_running = self.running
         self.stop()
         self.time_left = self.original_time
+        self.current_stage = "growing"
         self.notifications_sent.clear()
         self.update_callback(self.time_left, "Reset")
-        
+
         if was_running:
             self.start()
-        
+
         print("🔄 COCA timer reset")
     
     def _timer_loop(self):
-        """Main timer loop running in separate thread with smooth updates."""
+        """Main timer loop with multi-stage plant lifecycle support."""
         update_counter = 0
 
-        while self.running and self.time_left > 0:
+        while self.running:
             # Update display every 100ms for smooth percentage counting
-            self.update_callback(self.time_left, "Running")
+            status = self._get_current_status()
+            self.update_callback(self.time_left, status)
 
             # Wait 100ms for smooth updates
             time.sleep(0.1)
@@ -481,15 +620,81 @@ class CocaTimer:
 
             # Decrease time only every 10 updates (every 1 second)
             if self.running and update_counter >= 10:
-                self.time_left -= 1
+                if self.current_stage != "seeding":  # Seeding stage has no timer
+                    self.time_left -= 1
                 update_counter = 0
 
-        # Timer finished
-        if self.running:
-            self.time_left = 0
-            self.update_callback(self.time_left, "Completed!")
-            print("🎉 COCA timer completed!")
+                # Check for stage transitions
+                if self.time_left <= 0:
+                    self._advance_to_next_stage()
 
         self.running = False
+
+    def _get_current_status(self):
+        """Get the current status string based on stage."""
+        if self.current_stage == "growing":
+            return "Growing"
+        elif self.current_stage == "ready":
+            return "Ready"
+        elif self.current_stage == "flowering":
+            return "Flowering"
+        elif self.current_stage == "seeding":
+            return "Seeding"
+        else:
+            return "Running"
+
+    def _advance_to_next_stage(self):
+        """Advance to the next stage in the plant lifecycle."""
+        if self.current_stage == "growing":
+            # Growing completed, move to Ready stage
+            self.current_stage = "ready"
+            self.time_left = self._get_ready_duration()
+            self.notifications_sent.clear()
+            # Signal to stop any flashing from previous stage and play completion sound
+            self.notifications_sent.add("stage_transition")
+            self.update_callback(self.time_left, "stage_completed_growing")
+            print(f"🌱 Growing completed! Ready stage: {self.time_left//60}:{self.time_left%60:02d}")
+
+        elif self.current_stage == "ready":
+            # Ready completed, move to Flowering stage
+            self.current_stage = "flowering"
+            self.time_left = self._get_flowering_duration()
+            self.notifications_sent.clear()
+            # Signal to stop any flashing from previous stage and play completion sound
+            self.notifications_sent.add("stage_transition")
+            self.update_callback(self.time_left, "stage_completed_ready")
+            print(f"🌸 Ready completed! Flowering stage: {self.time_left//60}:{self.time_left%60:02d}")
+
+        elif self.current_stage == "flowering":
+            # Flowering completed, move to Seeding stage
+            self.current_stage = "seeding"
+            self.time_left = -1  # Infinite symbol
+            self.notifications_sent.clear()
+            # Signal to stop any flashing from previous stage and play completion sound
+            self.notifications_sent.add("stage_transition")
+            self.update_callback(self.time_left, "stage_completed_flowering")
+            print(f"🌾 Flowering completed! Seeding stage (infinite)")
+
+        # Note: Seeding stage is infinite, no further transitions
+
+    def _get_ready_duration(self):
+        """Get ready stage duration in seconds."""
+        if self.crop_type == "marijuana":
+            return 4 * 60  # 4 minutes for cannabis
+        else:  # coca
+            return int(7.5 * 60)  # 7.5 minutes for coca
+
+    def _get_flowering_duration(self):
+        """Get flowering stage duration in seconds."""
+        if self.crop_type == "marijuana":
+            if self.planter_type == "planter_box":
+                return 3 * 60  # 3 minutes for cannabis planter box
+            else:
+                return int(3.5 * 60)  # 3.5 minutes for cannabis basic
+        else:  # coca
+            if self.planter_type == "planter_box":
+                return int(7.5 * 60)  # 7.5 minutes for coca planter box
+            else:
+                return 8 * 60  # 8 minutes for coca basic
     
     # Audio methods removed for clean minimal implementation

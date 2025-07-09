@@ -21,11 +21,13 @@ try:
     from .screenshot_tool import ScreenshotTool
     from .area_selector import AreaSelector
     from .coca_timer import CocaTimer
+    from .preferences_dialog import PreferencesDialog
 except ImportError:
     # Direct imports (when run directly)
     from screenshot_tool import ScreenshotTool
     from area_selector import AreaSelector
     from coca_timer import CocaTimer
+    from preferences_dialog import PreferencesDialog
 
 
 class ModernTriggerDialog(QDialog):
@@ -360,10 +362,17 @@ class CocaTimerOverlay(QWidget):
         self.trigger_start = "ccc"  # Default start trigger
         self.trigger_reset = "rrr"  # Default reset trigger
 
-        # Configuration
-        self.config_file = "coca_config.json"
+        # Configuration - save to the project directory
+        project_dir = os.path.dirname(os.path.abspath(__file__))
+        self.config_file = os.path.join(project_dir, "coca_config.json")
         self.selected_area = None
         self.area_reset_requested = False
+
+        # Growing preferences
+        self.crop_type = "coca"  # coca or marijuana
+        self.planter_type = "basic"  # basic or planter_box
+        self.auto_detect_crop = True  # auto-detect crop type from screenshot
+
         self.load_config()  # Load config before setting up window
 
         self.setup_window()
@@ -460,6 +469,8 @@ class CocaTimerOverlay(QWidget):
         # Initial text with full format
         self.current_time = "38:00"
         self.current_percentage = "0.00 %"
+        self.current_crop_display = "Coca"  # Dynamic crop display name
+        self.current_status = "Growing"  # Current stage status
         self.original_time = 38 * 60  # Store original time for percentage calculation
         self.detected_percentage = 0.0  # Store the initially detected percentage
         self.notifications_sent = set()  # Track which notifications have been sent
@@ -470,7 +481,7 @@ class CocaTimerOverlay(QWidget):
         self.start_time = None  # Track when timer started for smooth percentage
 
         # Apply initial styling with default timer (38 minutes = 2280 seconds)
-        self.update_display(38 * 60, "ready")
+        self.update_display(38 * 60, "---")
     
     def setup_components(self):
         """Initialize core components."""
@@ -632,6 +643,13 @@ class CocaTimerOverlay(QWidget):
         menu.addMenu(trigger_menu)
         menu.addSeparator()
 
+        # Preferences action
+        preferences_action = QAction("🌿 Preferences", menu)
+        preferences_action.triggered.connect(self.show_preferences)
+        menu.addAction(preferences_action)
+
+        menu.addSeparator()
+
         # Exit action
         exit_action = QAction("❌ Exit", menu)
         exit_action.triggered.connect(self.exit_application)
@@ -781,7 +799,7 @@ class CocaTimerOverlay(QWidget):
     
     def update_text(self):
         """Update the display text with consistent formatting."""
-        text = f"Coca: {self.current_time} | {self.current_percentage}"
+        text = f"{self.current_crop_display}: {self.current_time} | {self.current_percentage} | {self.current_status}"
         self.label.setText(text)
 
         # Force the label to calculate its size with current styling
@@ -833,59 +851,122 @@ class CocaTimerOverlay(QWidget):
         threading.Thread(target=completion_thread, daemon=True).start()
 
     def update_display(self, time_left: int, status: str = ""):
-        """Update the timer display."""
-        minutes = time_left // 60
-        seconds = time_left % 60
+        """Update the timer display with multi-stage lifecycle support."""
 
-        self.current_time = f"{minutes:02d}:{seconds:02d}"
+        # Update current status (filter out stage completion signals)
+        if status.startswith("stage_completed_"):
+            # Don't update display status for completion signals, just handle sound
+            return
+        self.current_status = status if status else "Growing"
 
-        # Calculate live percentage based on time remaining
-        # 100% = 38 minutes total, detected percentage corresponds to time already elapsed
-
-        if hasattr(self, 'original_time') and self.original_time > 0:
-            # Use real time for ultra-smooth percentage progression
-            if self.start_time is None:
-                self.start_time = time.time()
-
-            # Calculate actual time elapsed since timer started
-            current_time = time.time()
-            real_time_elapsed = current_time - self.start_time
-
-            # Calculate the percentage range we need to cover (from detected to 100%)
-            percentage_range = 100.0 - self.detected_percentage
-
-            # Calculate progress through the remaining percentage using real time
-            if self.original_time > 0:
-                progress_ratio = min(real_time_elapsed / self.original_time, 1.0)
-                percentage_increase = percentage_range * progress_ratio
-                current_percentage = self.detected_percentage + percentage_increase
+        # Handle different stages
+        if status == "Seeding":
+            # Seeding stage shows infinity symbol
+            self.current_time = "∞"
+            self.current_percentage = "100.00 %"
+        elif status in ["Ready", "Flowering"]:
+            # Ready and Flowering stages show countdown timer
+            if time_left >= 0:
+                minutes = time_left // 60
+                seconds = time_left % 60
+                self.current_time = f"{minutes:02d}:{seconds:02d}"
             else:
-                current_percentage = self.detected_percentage
+                self.current_time = "00:00"
 
-            self.current_percentage = f"{current_percentage:.2f} %"
+            # For non-growing stages, show 100% (plant is fully grown)
+            self.current_percentage = "100.00 %"
         else:
-            self.current_percentage = f"{self.detected_percentage:.2f} %"
+            # Growing stage - normal timer with percentage progression
+            minutes = time_left // 60
+            seconds = time_left % 60
+            self.current_time = f"{minutes:02d}:{seconds:02d}"
 
-        # Handle notifications and flashing
-        if time_left == 300 and "5min" not in self.notifications_sent:  # 5 minutes
-            self.notifications_sent.add("5min")
-            self.play_beep(1)
-            self.start_flashing()
-        elif time_left == 60 and "1min" not in self.notifications_sent:  # 1 minute
-            self.notifications_sent.add("1min")
-            self.play_beep(2)
-            self.start_flashing()
-        elif time_left == 0 and "completed" not in self.notifications_sent:  # Completed
-            self.notifications_sent.add("completed")
-            self.play_completion_sound()
+            # Calculate live percentage based on time remaining during growing stage
+            if hasattr(self, 'original_time') and self.original_time > 0 and status == "Growing":
+                # Use real time for ultra-smooth percentage progression
+                if self.start_time is None:
+                    self.start_time = time.time()
+
+                # Calculate actual time elapsed since timer started
+                current_time = time.time()
+                real_time_elapsed = current_time - self.start_time
+
+                # Calculate the percentage range we need to cover (from detected to 100%)
+                percentage_range = 100.0 - self.detected_percentage
+
+                # Calculate progress through the remaining percentage using real time
+                if self.original_time > 0:
+                    progress_ratio = min(real_time_elapsed / self.original_time, 1.0)
+                    percentage_increase = percentage_range * progress_ratio
+                    current_percentage = self.detected_percentage + percentage_increase
+                else:
+                    current_percentage = self.detected_percentage
+
+                self.current_percentage = f"{current_percentage:.2f} %"
+            else:
+                self.current_percentage = f"{self.detected_percentage:.2f} %"
+
+        # Handle stage completion sounds
+        if status.startswith("stage_completed_"):
+            stage_name = status.replace("stage_completed_", "")
+            if status not in self.notifications_sent:
+                self.notifications_sent.add(status)
+                self.play_completion_sound()
+                self.stop_flashing()
+                print(f"🔊 {stage_name.title()} stage completed - playing completion sound")
+            return  # Don't process further for stage completion signals
+
+        # Handle notifications and flashing (only for timed stages)
+        if status != "Seeding" and time_left >= 0:
+            # Check if we just entered a new stage and stop flashing
+            stage_key = f"{status}_stage"
+            if stage_key not in self.notifications_sent:
+                self.notifications_sent.add(stage_key)
+                self.stop_flashing()  # Stop flashing when entering new stage
+
+            if time_left == 300 and f"{status}_5min" not in self.notifications_sent:  # 5 minutes
+                self.notifications_sent.add(f"{status}_5min")
+                self.play_beep(1)
+                self.start_flashing()
+            elif time_left == 60 and f"{status}_1min" not in self.notifications_sent:  # 1 minute
+                self.notifications_sent.add(f"{status}_1min")
+                self.play_beep(2)
+                self.start_flashing()
+            elif time_left == 0 and f"{status}_completed" not in self.notifications_sent:  # Stage completed
+                self.notifications_sent.add(f"{status}_completed")
+                self.play_completion_sound()
+                self.stop_flashing()
+
+        # Update background colors based on stage and time left
+        if status == "Seeding":
+            # Seeding stage - special green color to indicate completion
+            base_color = QColor(76, 175, 80, 120)  # Green for seeding
             self.stop_flashing()
-
-        # Update background colors based on time left
-        if time_left <= 60:  # Last minute - red background
+        elif status == "Flowering":
+            # Flowering stage - purple/pink color, only flash in warning periods
+            if time_left <= 60:  # Last minute - red background with flashing
+                base_color = QColor(255, 68, 68, 120)
+            elif time_left <= 300:  # Last 5 minutes - orange warning
+                base_color = QColor(255, 165, 0, 120)
+            else:  # Normal flowering - purple background, no flashing
+                base_color = QColor(156, 39, 176, 120)
+                if time_left > 300:  # Stop flashing if not in warning period
+                    self.stop_flashing()
+        elif status == "Ready":
+            # Ready stage - blue color, only flash in warning periods
+            if time_left <= 60:  # Last minute - red background with flashing
+                base_color = QColor(255, 68, 68, 120)
+            elif time_left <= 300:  # Last 5 minutes - orange warning
+                base_color = QColor(255, 165, 0, 120)
+            else:  # Normal ready - blue background, no flashing
+                base_color = QColor(33, 150, 243, 120)
+                if time_left > 300:  # Stop flashing if not in warning period
+                    self.stop_flashing()
+        elif time_left <= 60:  # Last minute - red background
             base_color = QColor(255, 68, 68, 120)
         elif time_left <= 300:  # Last 5 minutes - orange-yellow warning background
             base_color = QColor(255, 165, 0, 120)  # Orange-yellow warning color
-        else:  # Normal - light grey background
+        else:  # Normal growing - light grey background
             base_color = QColor(200, 200, 200, 80)
             self.stop_flashing()  # Stop flashing when not in warning time
 
@@ -1094,19 +1175,44 @@ class CocaTimerOverlay(QWidget):
 
             print("🔍 Running OCR detection...")
             percentage = None
+            detected_crop = None
 
             # Robust OCR with error handling
             try:
-                percentage = self.coca_timer.detect_percentage(screenshot)
+                if self.auto_detect_crop:
+                    # Use enhanced detection that also extracts crop type
+                    percentage, detected_crop = self.coca_timer.detect_percentage_and_crop(screenshot)
+
+                    # If crop type was detected, use it to override manual setting
+                    if detected_crop:
+                        original_crop = self.crop_type
+                        self.crop_type = detected_crop
+                        # Update display name for floating UI
+                        self.current_crop_display = "Cannabis" if detected_crop == "marijuana" else "Coca"
+                        print(f"🌿 Auto-detected crop type: {detected_crop} (was: {original_crop})")
+                    else:
+                        # Use manual setting and update display name
+                        self.current_crop_display = "Cannabis" if self.crop_type == "marijuana" else "Coca"
+                        print(f"🌿 No crop type detected, using manual setting: {self.crop_type}")
+                else:
+                    # Use standard percentage detection only
+                    percentage = self.coca_timer.detect_percentage(screenshot)
+                    # Update display name for manual setting
+                    self.current_crop_display = "Cannabis" if self.crop_type == "marijuana" else "Coca"
+                    print(f"🌿 Using manual crop setting: {self.crop_type}")
+
             except Exception as e:
                 print(f"⚠️ OCR detection failed: {e}")
                 percentage = None
+                detected_crop = None
 
             if percentage is not None:
-                timer_seconds = int((38 * 60) * (1 - percentage / 100))
+                timer_seconds = self.get_timer_duration(percentage)
                 timer_seconds = max(1, timer_seconds)  # Minimum 1 second
 
-                print(f"🔍 COCA OCR: Detected {percentage}% - Timer set to {timer_seconds//60}:{timer_seconds%60:02d}")
+                crop_name = "Coca" if self.crop_type == "coca" else "Marijuana"
+                planter_name = "Basic" if self.planter_type == "basic" else "Planter Box"
+                print(f"🔍 {crop_name} OCR: Detected {percentage}% - {planter_name} timer set to {timer_seconds//60}:{timer_seconds%60:02d}")
 
                 # Store detected percentage and set original time for percentage calculation
                 self.detected_percentage = percentage
@@ -1115,7 +1221,10 @@ class CocaTimerOverlay(QWidget):
 
                 # Start timer with error handling
                 try:
-                    self.coca_timer.start(timer_seconds)
+                    # Reset notifications for new timer
+                    self.notifications_sent.clear()
+                    self.stop_flashing()  # Stop any existing flashing
+                    self.coca_timer.start(timer_seconds, self.crop_type, self.planter_type)
                 except Exception as e:
                     print(f"⚠️ Timer start failed: {e}")
                     self._start_default_timer()
@@ -1130,13 +1239,20 @@ class CocaTimerOverlay(QWidget):
             self._starting_timer = False
 
     def _start_default_timer(self):
-        """Start default 38-minute timer with error handling."""
+        """Start default timer based on preferences with error handling."""
         try:
             self.detected_percentage = 0.0
-            self.original_time = 38 * 60
+            default_seconds = self.get_timer_duration(0.0)  # 0% = full timer
+            self.original_time = default_seconds
             self.start_time = None
-            self.coca_timer.start(38 * 60)
-            print("🎯 COCA timer started: 38:00 (default)")
+            # Reset notifications for new timer
+            self.notifications_sent.clear()
+            self.stop_flashing()  # Stop any existing flashing
+            self.coca_timer.start(default_seconds, self.crop_type, self.planter_type)
+
+            crop_name = "Coca" if self.crop_type == "coca" else "Marijuana"
+            planter_name = "Basic" if self.planter_type == "basic" else "Planter Box"
+            print(f"🎯 {crop_name} timer started: {default_seconds//60}:{default_seconds%60:02d} ({planter_name} - default)")
         except Exception as e:
             print(f"⚠️ Even default timer failed: {e}")
     
@@ -1158,6 +1274,15 @@ class CocaTimerOverlay(QWidget):
                     if 'trigger_reset' in config:
                         self.trigger_reset = config['trigger_reset']
                         print(f"✅ Loaded reset trigger: '{self.trigger_reset}'")
+                    if 'crop_type' in config:
+                        self.crop_type = config['crop_type']
+                        print(f"✅ Loaded crop type: '{self.crop_type}'")
+                    if 'planter_type' in config:
+                        self.planter_type = config['planter_type']
+                        print(f"✅ Loaded planter type: '{self.planter_type}'")
+                    if 'auto_detect_crop' in config:
+                        self.auto_detect_crop = config['auto_detect_crop']
+                        print(f"✅ Loaded auto-detect crop: {self.auto_detect_crop}")
         except Exception as e:
             print(f"⚠️ Error loading config: {e}")
     
@@ -1170,12 +1295,72 @@ class CocaTimerOverlay(QWidget):
             config['position_mode'] = self.position_mode
             config['trigger_start'] = self.trigger_start
             config['trigger_reset'] = self.trigger_reset
+            config['crop_type'] = self.crop_type
+            config['planter_type'] = self.planter_type
+            config['auto_detect_crop'] = self.auto_detect_crop
 
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=2)
             print("✅ Saved COCA config")
         except Exception as e:
             print(f"⚠️ Error saving config: {e}")
+
+    def show_preferences(self):
+        """Show preferences dialog."""
+        try:
+            current_settings = {
+                'crop_type': self.crop_type,
+                'planter_type': self.planter_type,
+                'auto_detect_crop': self.auto_detect_crop
+            }
+
+            dialog = PreferencesDialog(self, current_settings)
+            dialog.preferences_saved.connect(self.on_preferences_saved)
+            dialog.exec()
+        except Exception as e:
+            print(f"⚠️ Error showing preferences: {e}")
+
+    def on_preferences_saved(self, preferences):
+        """Handle saved preferences."""
+        try:
+            self.crop_type = preferences['crop_type']
+            self.planter_type = preferences['planter_type']
+            self.auto_detect_crop = preferences['auto_detect_crop']
+
+            # Update display name for floating UI
+            self.current_crop_display = "Cannabis" if self.crop_type == "marijuana" else "Coca"
+
+            # Save to config
+            self.save_config()
+
+            auto_status = "enabled" if self.auto_detect_crop else "disabled"
+            print(f"✅ Preferences updated: {self.crop_type} in {self.planter_type}, auto-detect {auto_status}")
+
+            # Update tray menu to reflect changes
+            self.create_tray_menu()
+
+        except Exception as e:
+            print(f"⚠️ Error saving preferences: {e}")
+
+    def get_timer_duration(self, percentage):
+        """Calculate timer duration based on crop type, planter type, and percentage."""
+        try:
+            # Base times in minutes
+            if self.crop_type == "coca":
+                base_time = 38.0 if self.planter_type == "basic" else 36.0
+            else:  # marijuana
+                base_time = 19.0 if self.planter_type == "basic" else 18.0
+
+            # Calculate remaining time based on percentage
+            remaining_percentage = 100.0 - percentage
+            remaining_time = (remaining_percentage / 100.0) * base_time
+
+            # Convert to seconds
+            return int(remaining_time * 60)
+
+        except Exception as e:
+            print(f"⚠️ Error calculating timer duration: {e}")
+            return 38 * 60  # Default fallback
 
 
 def main():
@@ -1184,7 +1369,7 @@ def main():
 
     # Set application properties
     app.setApplicationName("COCA Smart Timer")
-    app.setApplicationVersion("1.0")
+    app.setApplicationVersion("1.0.3")
     app.setOrganizationName("COCA Timer")
 
     # Ensure app doesn't quit when overlay is hidden

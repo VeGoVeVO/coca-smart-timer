@@ -95,29 +95,46 @@ jobs:
         tag_name: ${{ github.event.inputs.version || github.ref_name }}
         name: "Smart Coca Timer ${{ github.event.inputs.version || github.ref_name }}"
         body: |
-          ## COCA Smart Timer Release
-          
-          ### Features
-          - 🎯 Smart OCR percentage detection
-          - ⏱️ Automatic timer calculation based on detected percentage
-          - 🎮 Gaming-friendly floating overlay
-          - 🔧 Customizable trigger words
-          - 🎨 Coca leaf themed UI
-          - 🔊 Nature-inspired completion sounds
-          - 📍 Multiple overlay positions
-          - 💾 Persistent settings
-          
-          ### Installation
-          1. Download the ZIP file
+          ## 🌿 COCA Smart Timer v1.0.3 - Multi-Stage Plant Lifecycle Update
+
+          ### 🌟 Major New Features
+          - **Multi-Stage Plant Lifecycle**: Complete growth simulation (Growing → Ready → Flowering → Seeding)
+          - **Auto Crop Type Detection**: Intelligent OCR identifies Coca vs Cannabis automatically
+          - **Enhanced Preferences**: Modern UI with toggle switches and clean layout
+
+          ### ⏱️ New Timer Stages
+          - **Ready Stage**: 4min (Cannabis) / 7.5min (Coca) - all planters
+          - **Flowering Stage**: Cannabis (3.5min basic / 3min box), Coca (8min basic / 7.5min box)
+          - **Seeding Stage**: Infinite duration with ∞ symbol
+
+          ### 🎨 UI Improvements
+          - Dynamic status display shows current growth stage
+          - Stage-specific background colors (grey→blue→purple→green)
+          - Improved floating overlay with crop type detection
+          - Fixed text cropping and element positioning issues
+
+          ### 🔊 Audio Fixes
+          - Restored completion sounds for all stages
+          - Fixed flashing behavior (only during warning periods)
+          - Proper sound notifications for stage transitions
+
+          ### 🐛 Bug Fixes
+          - Fixed preferences save button functionality
+          - Resolved checkbox interaction problems
+          - Corrected initial status display
+          - Enhanced config file management
+
+          ### 📥 Installation
+          1. Download `Smart-Coca-Timer.zip`
           2. Extract to your desired location
           3. Run `COCA-Smart-Timer.exe`
-          4. Right-click the system tray icon to configure
-          
-          ### Requirements
+          4. Right-click system tray icon to configure
+
+          ### 🔧 Requirements
           - Windows 10/11
-          - Tesseract OCR (included in installer)
-          
-          Built for PerpHeads Gmod community.
+          - Tesseract OCR (bundled - no separate installation needed)
+
+          **Built for PerpHeads Gmod community** 🎮
         files: |
           Smart-Coca-Timer.zip
         draft: false
